@@ -23,7 +23,8 @@ export async function callGeminiApi(prompt: string, systemInstruction?: string):
     throw new Error("Gemini API key is not configured. Set GEMINI_API_KEY environment variable.");
   }
 
-  const API_ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro-latest:generateContent?key=${GEMINI_API_KEY}`;
+  // Using the specific Gemini 2.5 Pro model ID provided by the user.
+  const API_ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro-preview-05-06:generateContent?key=${GEMINI_API_KEY}`;
 
   const systemContent = systemInstruction || "You are a code assistant. Use only the following code snippets to answer the question. Cite file paths when referring to specific code. If the answer is not in these snippets, say \"I don't know.\"";
   

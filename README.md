@@ -9,7 +9,7 @@ Code Expert is a free, open-source AI assistant that lets developers input any p
 ## ✨ Key Features & Benefits
 
 *   **Real-Time Chat**: Interact directly with your indexed code and get answers in seconds.
-*   **100% Free & Open Source**: No subscription or API keys required—just paste a URL and start asking questions.
+*   **100% Free & Open Source**: Free to use and modify. Self-hosting or local setup requires your own API keys for Supabase and Google Gemini (see [Environment Variables](#environment-variables)).
 *   **Dual RAG Engines**: Compare "Base RAG" (pure semantic similarity) and "Filtered RAG" (semantic similarity with keyword filtering) for optimal answers tailored to your needs.
 *   **Supports Multiple Languages**: Automatically chunks and indexes code from various languages including Python, JavaScript, Java, C++, TypeScript, Markdown, and more.
 *   **Powered by Gemini 2.5 Pro**: Leverages Google's latest generative AI model for superior code understanding and response generation.
@@ -62,16 +62,16 @@ Code Expert relies on several environment variables for its functionality.
 
     ```env
     # .env
-    GITHUB_TOKEN=your_github_token_here # Optional: For cloning private repositories
-    SUPABASE_URL=https://<your-supabase-project-id>.supabase.co
-    SUPABASE_SERVICE_KEY=your-supabase-service-role-key
-    GOOGLE_API_KEY=your-google-cloud-api-key
+    GITHUB_TOKEN=YOUR_GITHUB_TOKEN_HERE # Optional: For cloning private repositories
+    SUPABASE_URL=YOUR_SUPABASE_URL_HERE
+    SUPABASE_SERVICE_KEY=YOUR_SUPABASE_SERVICE_KEY_HERE
+    GEMINI_API_KEY=YOUR_GEMINI_API_KEY_HERE
     ```
 
     *   `GITHUB_TOKEN`: (Optional) A GitHub Personal Access Token with `repo` scope if you plan to index private repositories.
     *   `SUPABASE_URL`: Your Supabase project URL, found in your Supabase project settings.
     *   `SUPABASE_SERVICE_KEY`: Your Supabase `service_role` key, found under Project Settings > API Keys in your Supabase dashboard. **Keep this key secure and do not expose it in client-side code.**
-    *   `GOOGLE_API_KEY`: Your Google Cloud API Key with access to the Generative AI API.
+    *   `GEMINI_API_KEY`: Your Google AI Studio API Key with access to the Gemini API. Ensure the Generative Language API is enabled in your Google Cloud project.
 
 3.  **Netlify Environment Variables (for deployment)**:
     If deploying to Netlify, you must also configure these environment variables in your Netlify dashboard:
@@ -95,13 +95,13 @@ Code Expert uses a PostgreSQL database with the `pgvector` extension for storing
       repo_id text not null,
       file_path text not null,
       content text not null,
-      embedding vector(1536), -- Adjust dimension if your embedding model changes (CodeBERT uses 768)
+      embedding vector(768), -- Default for Xenova/microsoft-codebert-base
       metadata jsonb,
       created_at timestamp with time zone default now()
     );
 
     create function match_chunks_by_embedding(
-      query_embedding vector(1536), -- Adjust dimension to match your embedding model
+      query_embedding vector(768), -- Matches the embedding model dimension
       repo_filter text,
       k int
     ) returns table (
@@ -109,7 +109,7 @@ Code Expert uses a PostgreSQL database with the `pgvector` extension for storing
       repo_id text,
       file_path text,
       content text,
-      embedding vector(1536),
+      embedding vector(768), -- Matches the embedding model dimension
       metadata jsonb,
       created_at timestamp with time zone,
       distance float
@@ -124,7 +124,7 @@ Code Expert uses a PostgreSQL database with the `pgvector` extension for storing
     end;
     $$ language plpgsql;
     ```
-    **Note**: The `embedding` column type and `query_embedding` parameter in the `match_chunks_by_embedding` function should match the dimension of your embedding model. The current setup uses `vector(1536)` which is common for some models, but `Xenova/microsoft-codebert-base` produces `768` dimensions. Please adjust accordingly if you change the model or if your `code_chunks` table was created with a different dimension.
+    **Note**: The `embedding` column type and `query_embedding` parameter in the `match_chunks_by_embedding` function are set to `vector(768)` to match the `Xenova/microsoft-codebert-base` model used in this project. If you change the embedding model, ensure you update these dimensions accordingly.
 
 ## 🏃 Usage
 
@@ -289,4 +289,3 @@ Special thanks to:
 For questions, feedback, or support, please open an issue on the [GitHub repository](https://github.com/AryamanGupta001/Code-Expert/issues) or contact the maintainer:
 
 *   **Aryaman Gupta**: [LinkedIn](https://www.linkedin.com/in/gupta-aryaman/)
-
