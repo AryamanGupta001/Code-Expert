@@ -1,0 +1,27 @@
+[build]
+  command   = "npm run build"
+  publish   = "dist"
+  functions = "netlify/functions"
+
+[dev]
+  command = "npm run dev" # This command starts the Vite dev server
+  port    = 3000          # Port for Vite dev server
+  targetPort = 5173       # Default Vite port, Netlify dev will proxy to this
+  framework = "vite"     # Hint for Netlify Dev
+  functions = "netlify/functions"
+  publish = "dist" # publish is a build setting, not dev
+
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
+
+# Optional: Redirects for SPA and functions
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/:splat"
+  status = 200
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

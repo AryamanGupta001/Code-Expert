@@ -1,78 +1,68 @@
-import { Octokit } from '@octokit/rest';
+// src/utils/github_utils.ts
+import os from "os";
+import path from "path";
+import fs from "fs-extra";
+import simpleGit, { SimpleGit } from "simple-git";
 
-export interface RepoInfo {
-  owner: string;
-  repo: string;
-  branch: string;
-}
-
-export async function parseGitHubUrl(url: string): Promise<RepoInfo> {
-  const pattern = /^https:\/\/github\.com\/([^\/]+)\/([^\/]+)/;
-  const match = url.match(pattern);
-  
-  if (!match) {
-    throw new Error('Invalid GitHub URL format');
+export async function cloneRepo(githubUrl: string, token?: string): Promise<string> {
+  /**
+   * Clones a GitHub repo into a temp folder.
+   * Returns the absolute path to the cloned directory.
+   */
+  if (!/^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/?$/.test(githubUrl)) {
+    throw new Error("Invalid GitHub URL");
   }
-  
-  return {
-    owner: match[1],
-    repo: match[2].replace(/\/$/, ''), // Remove trailing slash if present
-    branch: 'main' // Default to main, can be updated later
-  };
+
+  // Make a temp folder under OS temp directory
+  const repoName = path.basename(githubUrl).replace(/\.git$/, "");
+  const tmpDir = path.join(os.tmpdir(), `code_expert_${Date.now()}_${repoName}`);
+  await fs.mkdirp(tmpDir);
+
+  // If token is provided for private repos, inject it into URL
+  let cloneUrl = githubUrl;
+  if (token && token.length > 0) {
+    // e.g., https://<token>@github.com/username/repo.git
+    cloneUrl = githubUrl.replace(
+      "https://",
+      `https://${token}@`
+    );
+  }
+  const git: SimpleGit = simpleGit();
+  await git.clone(cloneUrl, tmpDir);
+  return tmpDir;
 }
 
-export async function fetchRepoContents(repoInfo: RepoInfo): Promise<any[]> {
-  const octokit = new Octokit();
-  
-  try {
-    const { data } = await octokit.repos.getContent({
-      owner: repoInfo.owner,
-      repo: repoInfo.repo,
-      ref: repoInfo.branch,
-      path: ''
-    });
-    
-    return Array.isArray(data) ? data : [data];
-  } catch (error) {
-    if (error.status === 404) {
-      throw new Error('Repository not found or is private');
+export async function listCodeFiles(repoPath: string): Promise<string[]> {
+  /**
+   * Walks the cloned directory and returns absolute paths for all
+   * files ending in .py, .js, .java, .cpp, .md (you can add more).
+   */
+  const exts = [".py", ".js", ".java", ".cpp", ".ts", ".tsx", ".md"];
+  const results: string[] = [];
+
+  async function walk(dir: string) {
+    const entries = await fs.readdir(dir);
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry);
+      const stat = await fs.stat(fullPath);
+      if (stat.isDirectory()) {
+        // Skip .git directory and node_modules
+        if (entry === '.git' || entry === 'node_modules') {
+          continue;
+        }
+        await walk(fullPath);
+      } else {
+        if (exts.some(e => fullPath.toLowerCase().endsWith(e))) {
+          results.push(fullPath);
+        }
+      }
     }
-    throw error;
   }
+  await walk(repoPath);
+  return results;
 }
 
-export async function fetchFileContent(repoInfo: RepoInfo, path: string): Promise<string> {
-  const octokit = new Octokit();
-  
-  try {
-    const { data } = await octokit.repos.getContent({
-      owner: repoInfo.owner,
-      repo: repoInfo.repo,
-      path,
-      ref: repoInfo.branch
-    });
-    
-    if ('content' in data) {
-      return Buffer.from(data.content, 'base64').toString();
-    }
-    
-    throw new Error('Not a file');
-  } catch (error) {
-    throw new Error(`Failed to fetch file content: ${error.message}`);
-  }
-}
-
-export function isCodeFile(filename: string): boolean {
-  const codeExtensions = [
-    '.js', '.jsx', '.ts', '.tsx',
-    '.py', '.rb', '.java', '.cpp', '.c',
-    '.go', '.rs', '.php', '.swift',
-    '.kt', '.scala', '.r', '.m',
-    '.h', '.cs', '.fs', '.f90',
-    '.pl', '.sh', '.bash', '.zsh',
-    '.sql', '.html', '.css', '.scss',
-    '.less', '.vue', '.svelte'
-  ];
-  
-  return codeExtensions.some(ext => filename.toLowerCase().endsWith(ext));
+export async function cleanupRepo(repoPath: string): Promise<void> {
+  // Recursively delete the cloned directory
+  await fs.remove(repoPath);
 }

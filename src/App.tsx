@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import Header from './components/Header';
 import Hero from './components/Hero';
 import About from './components/About';
@@ -7,41 +7,57 @@ import Features from './components/Features';
 import LiveDemo from './components/LiveDemo';
 import ChatInterface from './components/Chat/ChatInterface';
 import Footer from './components/Footer';
-import { Repository } from './types';
+// Repository type might not be directly used here anymore if repoId is the primary state
+// import { Repository } from './types'; 
 
 function App() {
-  const [currentRepository, setCurrentRepository] = useState<Repository | null>(null);
+  const [repoId, setRepoId] = useState<string | null>(null);
+  // For simplicity based on LiveDemo's current onRepoProcessed, 
+  // repoName and repoTotalChunks are not managed here directly.
+  // ChatInterface will use repoId and has fallbacks if name/chunks are not passed.
+  // If processRepo Netlify function returns more data, LiveDemo can pass it,
+  // and App.tsx can store it in state.
 
-  const handleProcessRepo = async (url: string) => {
-    // In a real app, this would make an API call to process the repository
-    // For demo purposes, we'll simulate processing with a timeout
-    await new Promise(resolve => setTimeout(resolve, 3000));
-    
-    // Extract repo name from URL
-    const urlParts = url.split('/');
-    const repoName = urlParts[urlParts.length - 1] || urlParts[urlParts.length - 2];
-    
-    setCurrentRepository({
-      id: `repo-${Date.now()}`,
-      url,
-      name: repoName,
-      chunks: Math.floor(50 + Math.random() * 150)
-    });
-    
-    return true;
+  const chatRef = useRef<HTMLDivElement>(null);
+
+  // This function will be called by LiveDemo after the Netlify function successfully processes the repo
+  // LiveDemo currently calls onRepoProcessed(data.repo_id)
+  const handleRepoProcessed = (processedRepoId: string) => {
+    setRepoId(processedRepoId);
+    // If you want to extract repo name from URL, LiveDemo would need to pass the original URL too
+    // For example: handleRepoProcessed = (id, url, chunks) => { setRepoId(id); setUrl(url); ... }
   };
+  
+  // Scroll to chat interface when repoId is set
+  useEffect(() => {
+    if (repoId && chatRef.current) {
+      chatRef.current.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [repoId]);
 
   return (
     <div className="flex flex-col min-h-screen">
       <Header />
       
-      <main>
+      <main className="flex-grow"> {/* Added flex-grow */}
         <Hero />
         <About />
         <HowTo />
         <Features />
-        <LiveDemo onProcessRepo={handleProcessRepo} />
-        <ChatInterface currentRepository={currentRepository} />
+        
+        <section id="live-demo" className="section bg-gray-50"> 
+          <LiveDemo onRepoProcessed={handleRepoProcessed} />
+        </section>
+        
+        {/* Conditionally render ChatInterface */}
+        {repoId && (
+          <section id="chat-interface" ref={chatRef} className="section bg-white">
+            <ChatInterface 
+              repoId={repoId} 
+              // currentRepositoryName and currentRepositoryChunks can be added if fetched/passed
+            />
+          </section>
+        )}
       </main>
       
       <Footer />

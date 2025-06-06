@@ -1,100 +1,114 @@
-import { encode } from 'gpt-tokenizer';
-import { searchSimilarChunks } from './supabase_utils';
-import type { CodeChunkRecord } from './supabase_utils';
+// src/utils/rag_utils.ts
+import axios from "axios";
+import { ChunkRow } from "./supabase_utils";
+import { get_encoding as getEncoding } from "@dqbd/tiktoken";
 
-interface RAGResponse {
+// For Netlify functions, process.env.GEMINI_API_KEY is the way.
+const GEMINI_API_KEY: string | undefined = process.env.GEMINI_API_KEY;
+// If you also need to support client-side Vite dev with a fallback:
+// const GEMINI_API_KEY: string | undefined = process.env.GEMINI_API_KEY || (typeof import.meta !== 'undefined' ? import.meta.env.VITE_GEMINI_API_KEY : undefined);
+
+export interface RAGResult {
   answer: string;
-  sources: string[];
   metrics: {
-    contextRelevance: number;
+    context_relevance: number;
     groundedness: number;
-    chunksRetrieved: number;
+    num_chunks_retrieved: number;
   };
+  sources: { file_path: string; distance: number }[];
 }
 
-const SYSTEM_PROMPT = `You are a code expert assistant. Answer questions about code using only the provided context. 
-If you cannot answer from the context, say so. Always cite specific files when referencing code.`;
+export async function callGeminiApi(prompt: string, systemInstruction?: string): Promise<string> {
+  if (!GEMINI_API_KEY) {
+    throw new Error("Gemini API key is not configured. Set GEMINI_API_KEY environment variable.");
+  }
 
-export async function generateAnswer(
-  question: string,
-  context: CodeChunkRecord[],
-  variant: 'base' | 'filtered' = 'filtered'
-): Promise<RAGResponse> {
-  // Prepare context
-  const contextText = context
-    .map(chunk => `File: ${chunk.file_path}\n\`\`\`\n${chunk.content}\n\`\`\``)
-    .join('\n\n');
+  const API_ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro-latest:generateContent?key=${GEMINI_API_KEY}`;
+
+  const systemContent = systemInstruction || "You are a code assistant. Use only the following code snippets to answer the question. Cite file paths when referring to specific code. If the answer is not in these snippets, say \"I don't know.\"";
   
-  // Build messages array
-  const messages = [
-    { role: 'system', content: SYSTEM_PROMPT },
-    { role: 'user', content: `Context:\n${contextText}\n\nQuestion: ${question}` }
-  ];
-  
-  try {
-    // Call DeepSeek API
-    const response = await fetch('https://api.deepseek.ai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${import.meta.env.VITE_DEEPSEEK_API_KEY}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        model: 'deepseek-chat',
-        messages,
-        temperature: 0.3,
-        max_tokens: 1000
-      })
-    });
-    
-    if (!response.ok) {
-      throw new Error('Failed to generate answer');
+  const requestBody = {
+    contents: [
+      {
+        role: "user", // For Gemini, system instructions are often prepended to the first user message
+        parts: [{ text: `${systemContent}\n\n${prompt}` }] 
+      }
+    ],
+    generationConfig: {
+      temperature: 0.3, 
+      maxOutputTokens: 4096, // Increased for potentially longer code explanations
+      // topP: 0.9,
+      // topK: 40, // Consider safetySettings if needed
     }
-    
-    const result = await response.json();
-    const answer = result.choices[0].message.content;
-    
-    // Calculate metrics
-    const metrics = calculateMetrics(answer, context, question);
-    
-    return {
-      answer,
-      sources: context.map(c => c.file_path),
-      metrics
-    };
-  } catch (error) {
-    console.error('Error generating answer:', error);
-    throw error;
+  };
+
+  try {
+    const response = await axios.post(API_ENDPOINT, requestBody, {
+      headers: {
+        "Content-Type": "application/json"
+      }
+    });
+
+    if (response.data && response.data.candidates && response.data.candidates.length > 0 &&
+        response.data.candidates[0].content && response.data.candidates[0].content.parts &&
+        response.data.candidates[0].content.parts.length > 0 && response.data.candidates[0].content.parts[0].text) {
+      return response.data.candidates[0].content.parts[0].text;
+    } else {
+      console.error("Unexpected Gemini API response structure:", response.data);
+      throw new Error("Invalid response structure from Gemini API or empty response.");
+    }
+  } catch (error: any) {
+    if (error.response) {
+      console.error("Error calling Gemini API:", error.response.status, error.response.data);
+      throw new Error(`Gemini API Error: ${error.response.status} ${JSON.stringify(error.response.data)}`);
+    } else {
+      console.error("Error calling Gemini API (no response):", error.message);
+      throw new Error(`Gemini API Error: ${error.message}`);
+    }
   }
 }
 
-function calculateMetrics(
-  answer: string,
-  context: CodeChunkRecord[],
-  question: string
-) {
-  // Calculate context relevance based on token overlap
-  const answerTokens = new Set(encode(answer));
-  const contextTokens = new Set(
-    context.flatMap(c => encode(c.content))
-  );
-  const questionTokens = new Set(encode(question));
+export function buildPrompt(question: string, chunks: ChunkRow[]): string {
+  // This function now primarily formats the context and question for the `callGeminiApi`
+  // The system instruction is handled within `callGeminiApi` or can be passed to it.
+  let context = "";
+  chunks.forEach((c, i) => {
+    context += `### Source ${i + 1}: ${c.file_path}\n\`\`\`\n${c.chunk_text}\n\`\`\`\n\n`;
+  });
+  // The actual prompt sent to Gemini will be constructed by callGeminiApi using this context + question
+  return `Context:\n${context}Question: ${question}\nAnswer:`; // This is the "prompt" part for callGeminiApi's `prompt` parameter
+}
+
+export function computeMetrics(answer: string, chunks: ChunkRow[]): {
+  context_relevance: number;
+  groundedness: number;
+  num_chunks_retrieved: number;
+} {
+  const tokenizer = getEncoding("cl100k_base"); 
+
+  const sims = chunks.length > 0 ? chunks.map((c) => 1 / (1 + Math.max(0, c.distance))) : [0];
+  const context_relevance = chunks.length > 0 ? sims.reduce((a, b) => a + b, 0) / sims.length : 0;
+
+  const answerTokens = new Set(Array.from(tokenizer.encode(answer)).map((t: number) => t.toString()));
+  const snippetTokens = new Set<string>();
+  chunks.forEach((c) => {
+    tokenizer.encode(c.chunk_text).forEach((t: number) => snippetTokens.add(t.toString()));
+  });
   
-  const relevantTokens = new Set(
-    [...answerTokens].filter(t => contextTokens.has(t))
-  );
+  let overlapCount = 0;
+  if (answerTokens.size > 0) { 
+    answerTokens.forEach((tok) => {
+      if (snippetTokens.has(tok)) overlapCount++;
+    });
+  }
   
-  const contextRelevance = relevantTokens.size / answerTokens.size;
-  
-  // Calculate groundedness based on factual consistency
-  const groundedness = Math.min(
-    contextRelevance * 1.2, // Boost if highly relevant
-    0.95 // Cap at 0.95 to account for uncertainty
-  );
-  
+  const groundedness = answerTokens.size > 0 ? overlapCount / answerTokens.size : 0;
+
+  tokenizer.free(); 
+
   return {
-    contextRelevance,
-    groundedness,
-    chunksRetrieved: context.length
+    context_relevance: parseFloat(context_relevance.toFixed(4)), 
+    groundedness: parseFloat(groundedness.toFixed(4)),     
+    num_chunks_retrieved: chunks.length
   };
 }

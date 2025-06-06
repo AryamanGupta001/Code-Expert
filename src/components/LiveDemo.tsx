@@ -2,10 +2,11 @@ import React, { useState } from 'react';
 import { ArrowRight, Loader } from 'lucide-react';
 
 interface LiveDemoProps {
-  onProcessRepo: (url: string) => Promise<void>;
+  // onProcessRepo: (url: string) => Promise<void>; // Old prop
+  onRepoProcessed: (repoId: string) => void; // New prop as per plan
 }
 
-const LiveDemo: React.FC<LiveDemoProps> = ({ onProcessRepo }) => {
+const LiveDemo: React.FC<LiveDemoProps> = ({ onRepoProcessed }) => {
   const [repoUrl, setRepoUrl] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -25,23 +26,40 @@ const LiveDemo: React.FC<LiveDemoProps> = ({ onProcessRepo }) => {
     
     setError(null);
     setIsProcessing(true);
-    
+    setError(null); // Clear previous errors
+    setIsSuccess(false); // Clear previous success
+
     try {
-      await onProcessRepo(repoUrl);
+      const response = await fetch("/.netlify/functions/processRepo", { // Calling the Netlify function
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ githubUrl: repoUrl })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || `Failed to process repository (status: ${response.status})`);
+      }
+      
       setIsSuccess(true);
+      if (data.repo_id) {
+        onRepoProcessed(data.repo_id); // Pass the repo_id to the parent
+      }
+      
+      // Auto-scroll to chat interface after a short delay to show success message
       setTimeout(() => {
         const chatSection = document.getElementById('chat-interface');
         if (chatSection) {
           chatSection.scrollIntoView({ behavior: 'smooth' });
         }
-        
-        // Reset success after scrolling
-        setTimeout(() => {
-          setIsSuccess(false);
-        }, 3000);
+        // Optionally reset success message after some time if needed
+        // setTimeout(() => setIsSuccess(false), 4000); // Increased delay
       }, 1000);
-    } catch (err) {
-      setError('Failed to process repository. Please check the URL and try again.');
+
+    } catch (err: any) {
+      console.error("Error processing repository:", err);
+      setError(err.message || 'Failed to process repository. Please check the URL and try again.');
     } finally {
       setIsProcessing(false);
     }
